@@ -1,5 +1,6 @@
 import torch
 from multiprocessing import Pool
+from concurrent.futures import ProcessPoolExecutor
 import os
 from datetime import datetime
 from tqdm import tqdm
@@ -92,9 +93,7 @@ def main():
     for i in os.listdir("transformed_data/14_02"): os.remove(f"transformed_data/14_02/{i}") 
     # Get the labels
     csv = read_csv("processed_data/Wednesday-14-02-2018_TrafficForML_CICFlowMeter.csv")
-    print("csv in")
-    with Pool(10) as pool:
-        target = pool.map(generate_target_tuple, csv)
+    with Pool(10) as pool: target = pool.map(generate_target_tuple, csv)
     write_target(target)
     del target
     
@@ -102,9 +101,9 @@ def main():
     files_14_02 = os.listdir("original_data/Wednesday-14-02-2018/pcap")
     tasks = [(i, True, idx) for idx, i in enumerate(files_14_02)]
     # Generate csv files from the pcap files
-    with Pool(10) as pool: pool.starmap(generate_hexdump, tasks)
-    print("done with generating")
-    input()
+    with ProcessPoolExecutor(8) as executer:
+        executer.map(generate_hexdump, [i[0] for i in tasks],
+                     [i[1] for i in tasks], [i[2] for i in tasks], chunksize=10)
     transform_hexdump() 
             
 
