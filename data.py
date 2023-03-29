@@ -21,37 +21,61 @@ class Dataset(torch.utils.data.Dataset):
         return len(self.data)
 
 
-def generate_hexdump(file: str, write: bool) -> list[tuple[int, str]]:
-    """Generates a hexdump of a pcap file and writes it to a csv file or returns it."""
-    print(os.path.getsize(f"original_data/Wednesday-14-02-2018/pcap/{file}") >> 20,
-          "MB", flush=True, end="\t")
-    print(file, flush=True)
-    # infile: list[(timestamp, packet)]
+def generate_hexdump(file: str, write: bool, idx: int):
+    print(idx, os.path.getsize(f"original_data/Wednesday-14-02-2018/pcap/{file}") >> 20,
+          "MB", file, flush=True, end="\r")
     infile = dpkt.pcap.Reader(open(f"original_data/Wednesday-14-02-2018/pcap/{file}", "rb"))
     infile = [(i[0], i[1].hex()) for i in infile]
     if write:
-        with open("transformed_data/14_02.csv", "a") as f:
-            writer = csv.writer(f)
-            writer.writerows(infile)
-            print("<<<",
-                  os.path.getsize("transformed_data/14_02.csv") >> 30, "GB",
-                  subprocess.run("wc -l transformed_data/14_02.csv", shell=True,
-                                 capture_output=True).stdout.split()[0],
-                  ">>>")
-    else:
-        return infile
+        with open(f"transformed_data/14_02/{file}.csv", "w") as f:
+            csv.writer(f).writerows(infile)
+    return infile
+
+def transform_hexdump():
+    file_list = [i for i in os.listdir("transformed_data/14_02")]
+    file_list = [i for i  in file_list if (i[:3] == "cap") or (i[:4] == "UCAP")]
+    for i in tqdm(file_list):
+        with open(f"transformed_data/14_02/{i}", "r") as file:
+            packets = [i.split(",") for i in file.readlines()]
+            for obs in packets:
+                file_name = int(float(obs[0]))
+                if len(str(file_name)) < 4:
+                    print(file_name)
+                    break
+                payload = obs[1]
+                with open(f"transformed_data/14_02/{file_name}.csv", "a") as f:
+                    f.write(payload)
+            os.remove(f"transformed_data/14_02/{i}")
+
+    
+def combine_csv(origin_path: str, destination_path: str) -> None:
+    try: os.remove(destination_path)
+    except FileNotFoundError: pass
+
+    file_list = os.listdir(origin_path)
+    with open(destination_path, "a") as f:
+       writer = csv.writer(f)
+       for file in tqdm(file_list):
+           writer.writerows(read_csv(origin_path+file))
+           os.remove(origin_path+file)
+           print(os.path.getsize(destination_path) >> 20, "MB | Num. of lines:",
+                 subprocess.run(f"wc -l {destination_path}", shell=True,
+                                capture_output=True).stdout.split()[0],
+                 end="\n")
 
 def read_csv(filename: str) -> list[str]:
     with open(filename, "r") as f:
         lines = f.readlines()
-    lines = [i.strip().split(",") for i in lines]
-    lines = lines[1:]
+    lines = [i.strip().split(",") for i in lines][1:]
     return lines
 
-def transform_line(line: str) -> tuple[int, str]:
-    """Transforms a line of a csv file into the desired format."""
-    line = (datetime.strptime(line[2], "%d/%m/%Y %H:%M:%S").strftime("%s"), line[-1])
-    return line
+def write_target(target):
+    with open("transformed_data/14_02/target.csv", "w") as f:
+        csv.writer(f).writerows(target)
+
+def generate_target_tuple(line: str) -> tuple[int, str]:
+    target = (datetime.strptime(line[2], "%d/%m/%Y %H:%M:%S").strftime("%s"), line[-1])
+    return target
 
 def get_label_counts(labels):
     unique = {}
@@ -64,20 +88,27 @@ def get_label_counts(labels):
     
     
 def main():
+    # Start fresh
+    for i in os.listdir("transformed_data/14_02"): os.remove(f"transformed_data/14_02/{i}") 
     # Get the labels
-    # csv = read_csv("processed_data/Wednesday-14-02-2018_TrafficForML_CICFlowMeter.csv")
-    # with Pool(12) as pool: labels = pool.map(transform_line, csv)
-    # for i in labels[:10]: print(i)
-    # print(len(labels), get_label_counts([i[1] for i in labels]))
+    csv = read_csv("processed_data/Wednesday-14-02-2018_TrafficForML_CICFlowMeter.csv")
+    print("csv in")
+    with Pool(10) as pool:
+        target = pool.map(generate_target_tuple, csv)
+    write_target(target)
+    del target
     
     # Get the packets
-    os.remove("transformed_data/14_02.csv")
-    files_14_02 = os.listdir("original_data/Wednesday-14-02-2018/pcap")[:100]
-    tasks = [(i, True) for i in files_14_02]
-    with Pool(10) as pool: packets = pool.starmap(generate_hexdump, tasks)
+    files_14_02 = os.listdir("original_data/Wednesday-14-02-2018/pcap")
+    tasks = [(i, True, idx) for idx, i in enumerate(files_14_02)]
+    # Generate csv files from the pcap files
+    with Pool(10) as pool: pool.starmap(generate_hexdump, tasks)
+    print("done with generating")
+    input()
+    transform_hexdump() 
+            
+
         
-    # packets = [i for j in packets for i in j]
-    # print(len(packets))
 
 
 if __name__ == "__main__":
