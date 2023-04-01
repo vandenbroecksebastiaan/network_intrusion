@@ -54,17 +54,33 @@ def generate_hexdump(file: str, write: bool, idx: int):
             csv.writer(f).writerows(infile)
     return infile
 
-def transform_hexdump():
+def transform_hexdump() -> None:
     file_list = [i for i in os.listdir("transformed_data/14_02")]
     file_list = [i for i  in file_list if (i[:3] == "cap") or (i[:4] == "UCAP")]
+    bound_exceeded_counter = 0
     for i in tqdm(file_list):
         with open(f"transformed_data/14_02/{i}", "r") as file:
             packets = [i.split(",") for i in file.readlines()]
-            for obs in packets:
+            for obs in tqdm(packets, leave=False):
                 file_name = int(float(obs[0]))
-                payload = obs[1]
-                with open(f"transformed_data/14_02/{file_name}.csv", "a") as f:
-                    f.write(payload)
+                # TODO: ensure that the date, or file name, is between the upper
+                # and lower bounds of the day
+
+                upper_bound = datetime(2018, 2, 14, 23, 59, 59).timestamp()
+                lower_bound = datetime(2018, 2, 14, 0, 0, 0).timestamp()
+                
+                if file_name > upper_bound:
+                    bound_exceeded_counter += 1
+                    print("upper bound exceeded: ", bound_exceeded_counter, i)
+
+                if file_name < lower_bound:
+                    bound_exceeded_counter += 1
+                    print("lower bound exceeded: ", bound_exceeded_counter, i)
+
+                if (file_name > lower_bound) and (file_name < upper_bound):
+                    payload = obs[1]
+                    with open(f"transformed_data/14_02/{file_name}.csv", "a") as f:
+                        f.write(payload)
             os.remove(f"transformed_data/14_02/{i}")
     
 def combine_csv(origin_path: str, destination_path: str) -> None:
@@ -122,12 +138,13 @@ def main():
     for i in os.listdir("transformed_data/14_02"): os.remove(f"transformed_data/14_02/{i}") 
     # Get the labels
     csv = read_csv("processed_data/Wednesday-14-02-2018_TrafficForML_CICFlowMeter.csv")
+    print("csv in")
     with Pool(10) as pool: target = pool.map(generate_target_tuple, csv)
-    print("shape before:", len(target))
-    target = [i for i in target if i[0] > 1.5e9]
-    print("shape after:", len(target))
+    print("target generated")
     target = transform_target(target)
+    print("target transformed")
     write_target(target); del target;
+    print("target written")
     
     # Get the packets
     files_14_02 = os.listdir("original_data/Wednesday-14-02-2018/pcap")
@@ -136,7 +153,9 @@ def main():
     with ProcessPoolExecutor(7) as executer:
         executer.map(generate_hexdump, [i[0] for i in tasks],
                      [i[1] for i in tasks], [i[2] for i in tasks], chunksize=10)
+    print("hexdump generated")
     transform_hexdump() 
+    print("hexdump transformed and written")
     """
     from scapy.utils import RawPcapReader, tcpdump
     pcaps = RawPcapReader("original_data/Wednesday-14-02-2018/pcap/capDESKTOP-AN3U28N-172.31.64.26")
