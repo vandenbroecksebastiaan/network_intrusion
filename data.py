@@ -2,7 +2,6 @@ import torch
 from multiprocessing import Pool
 from concurrent.futures import ProcessPoolExecutor
 import os
-import time
 from datetime import datetime
 from tqdm import tqdm
 import os
@@ -13,26 +12,8 @@ import subprocess
 
 class PacketDataset(torch.utils.data.Dataset):
     def __init__(self):
-        self.data_files = os.listdir("transformed_data/14_02")
-        self.data_files = [i[:-4] for i in self.data_files]
-        print("Number of files before removing:", len(self.data_files))
-        self.data_files = [int(i) for i in self.data_files if len(i) > 9]
-        print("Number of files after removing:", len(self.data_files))
-        
-        self.target = read_csv("transformed_data/14_02/target.csv")
-        self.target = [[int(i[0]), float(i[1])] for i in self.target]
-        
-        print("len target:", len(self.target))
-        print("len data_files:", len(self.data_files))
-        
-        for i in zip(self.data_files[1000:1100], self.target[1000:1100]): print(i)
-        
-        target_timestamps = [i[0] for i in self.target]
-        file_timestamps = [int(i) for i in self.data_files]
-        
-        print("number of files with a target")
-        is_in = [i for i in file_timestamps if i in target_timestamps]
-        print(len(is_in))
+        # Read the target and find all the timestamps for which we have data
+        target = read_csv("transformed_data/14_02/target.csv", header=False)
         
         self.data = None
         self.labels = None
@@ -54,34 +35,37 @@ def generate_hexdump(file: str, write: bool, idx: int):
             csv.writer(f).writerows(infile)
     return infile
 
-def transform_hexdump() -> None:
+def transform_write_hexdump() -> None:
     file_list = [i for i in os.listdir("transformed_data/14_02")]
     file_list = [i for i  in file_list if (i[:3] == "cap") or (i[:4] == "UCAP")]
     bound_exceeded_counter = 0
-    for i in tqdm(file_list):
-        with open(f"transformed_data/14_02/{i}", "r") as file:
+    for file_name in tqdm(file_list):
+        with open(f"transformed_data/14_02/{file_name}", "r") as file:
             packets = [i.split(",") for i in file.readlines()]
             for obs in tqdm(packets, leave=False):
-                file_name = int(float(obs[0]))
-                # TODO: ensure that the date, or file name, is between the upper
-                # and lower bounds of the day
+                timestamp = int(float(obs[0]))
+                # Subtract 12 hours from the timestamp such that the timestamps
+                # from the packets are aligned with the timestamps from target.csv
+                timestamp = timestamp - 12*60*60
 
                 upper_bound = datetime(2018, 2, 14, 23, 59, 59).timestamp()
                 lower_bound = datetime(2018, 2, 14, 0, 0, 0).timestamp()
                 
-                if file_name > upper_bound:
+                if timestamp > upper_bound:
                     bound_exceeded_counter += 1
-                    print("upper bound exceeded: ", bound_exceeded_counter, i)
+                    print(" upper bound exceeded:", bound_exceeded_counter, file_name)
 
-                if file_name < lower_bound:
+                if timestamp < lower_bound:
                     bound_exceeded_counter += 1
-                    print("lower bound exceeded: ", bound_exceeded_counter, i)
+                    print(" lower bound exceeded:", bound_exceeded_counter, file_name)
 
-                if (file_name > lower_bound) and (file_name < upper_bound):
+                if (timestamp > lower_bound) and (timestamp < upper_bound):
                     payload = obs[1]
-                    with open(f"transformed_data/14_02/{file_name}.csv", "a") as f:
+                    # TODO: reduce data leakage from the payload
+                    with open(f"transformed_data/14_02/{timestamp}.csv", "a") as f:
                         f.write(payload)
-            os.remove(f"transformed_data/14_02/{i}")
+
+            os.remove(f"transformed_data/14_02/{file_name}")
     
 def combine_csv(origin_path: str, destination_path: str) -> None:
     try: os.remove(destination_path)
@@ -138,13 +122,13 @@ def main():
     for i in os.listdir("transformed_data/14_02"): os.remove(f"transformed_data/14_02/{i}") 
     # Get the labels
     csv = read_csv("processed_data/Wednesday-14-02-2018_TrafficForML_CICFlowMeter.csv")
-    print("csv in")
+    print(">>> csv in")
     with Pool(10) as pool: target = pool.map(generate_target_tuple, csv)
-    print("target generated")
+    print(">>> target generated")
     target = transform_target(target)
-    print("target transformed")
+    print(">>> target transformed")
     write_target(target); del target;
-    print("target written")
+    print(">>> target written")
     
     # Get the packets
     files_14_02 = os.listdir("original_data/Wednesday-14-02-2018/pcap")
@@ -152,15 +136,15 @@ def main():
     # Generate csv files from the pcap files
     with ProcessPoolExecutor(7) as executer:
         executer.map(generate_hexdump, [i[0] for i in tasks],
-                     [i[1] for i in tasks], [i[2] for i in tasks], chunksize=10)
-    print("hexdump generated")
-    transform_hexdump() 
-    print("hexdump transformed and written")
+                     [i[1] for i in tasks], [i[2] for i in tasks], chunksize=1)
+    print(">>> hexdump generated")
+    transform_write_hexdump() 
+    print(">>> hexdump transformed and written")
     """
-    from scapy.utils import RawPcapReader, tcpdump
-    pcaps = RawPcapReader("original_data/Wednesday-14-02-2018/pcap/capDESKTOP-AN3U28N-172.31.64.26")
-    print(pcaps.next())
-    # print(tcpdump("original_data/Wednesday-14-02-2018/pcap/capDESKTOP-AN3U28N-172.31.64.26"))
+    from scapy.utils import RawPcapReader, tcpdump, PcapReader
+    pcaps = PcapReader("original_data/Wednesday-14-02-2018/pcap/capDESKTOP-AN3U28N-172.31.64.26")
+    packet = pcaps.next()
+    print(tcpdump("original_data/Wednesday-14-02-2018/pcap/capDESKTOP-AN3U28N-172.31.64.26"))
     """
 
     
