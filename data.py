@@ -4,25 +4,55 @@ from concurrent.futures import ProcessPoolExecutor
 import os
 from datetime import datetime
 from tqdm import tqdm
-import os
 import dpkt
 import csv
 import subprocess
+import random
+import torch
+torch.set_printoptions(sci_mode=False)
 
 
 class PacketDataset(torch.utils.data.Dataset):
     def __init__(self):
+        # Get the files for which we have data
+        files = os.listdir("transformed_data/14_02")
+        files = [i.replace(".csv", "") for i in files]
+        files.remove("target")
+        files = [int(i) for i in files]
+        print("n files:", len(files))
         # Read the target and find all the timestamps for which we have data
         target = read_csv("transformed_data/14_02/target.csv", header=False)
+        print("n targets before:", len(target))
+        target = [i for i in target if int(i[0]) in files]
+        print("n targets:", len(target))
         
-        self.data = None
-        self.labels = None
+        target_timestamp = torch.tensor([int(i[0]) for i in target])
+        target_values = torch.tensor([float(i[1]) for i in target])
+
+        self.files = files
+        self.target_timestamp = target_timestamp
+        self.target_values = target_values
+
+        self.vocab_to_token = {i: j for j, i in enumerate("0123456789abcdef")}
+        
+        print("init dataset done")
 
     def __getitem__(self, idx):
-        return self.data[idx], self.labels[idx]
+        # The idx will get a timestamp
+        timestamp = self.target_timestamp[idx]
+        file = read_csv(f"transformed_data/14_02/{timestamp}.csv", header=False)
+        # Sample 1000 packets from the file
+        if len(file) > 1000: file = random.sample(file, 1000) # without replacement
+        obs = [i[0] for i in file] # Undo nested list
+        obs = "".join(obs)
+        obs = self.tokenize(obs)
+        return obs, self.target_values[self.target_timestamp == timestamp].item()
 
     def __len__(self):
-        return len(self.data)
+        return len(self.target_timestamp)
+    
+    def tokenize(self, obs: str):
+        return torch.tensor([self.vocab_to_token[str(i)] for i in obs])
 
 
 def generate_hexdump(file: str, write: bool, idx: int):
@@ -140,13 +170,6 @@ def main():
     print(">>> hexdump generated")
     transform_write_hexdump() 
     print(">>> hexdump transformed and written")
-    """
-    from scapy.utils import RawPcapReader, tcpdump, PcapReader
-    pcaps = PcapReader("original_data/Wednesday-14-02-2018/pcap/capDESKTOP-AN3U28N-172.31.64.26")
-    packet = pcaps.next()
-    print(tcpdump("original_data/Wednesday-14-02-2018/pcap/capDESKTOP-AN3U28N-172.31.64.26"))
-    """
-
     
 
 if __name__ == "__main__":
